@@ -1,5 +1,8 @@
 import network
 import time
+from machine import Pin
+
+onboard_led = Pin(2, Pin.OUT)
 
 
 def connect_to_wifi(SSID, PASSWORD):
@@ -16,13 +19,17 @@ def connect_to_wifi(SSID, PASSWORD):
     wifi.connect(SSID, PASSWORD)
     
     print(f"Connecting to WiFi network '{SSID}'")
-    
+    onboard_led.on()
     time.sleep(2)
+    onboard_led.off()
     # while the wifi has not connected, keep trying for 5 seconds
     while not wifi.isconnected() and connection_timeout < 10:
         connection_timeout += 1
         time.sleep(1)
+        onboard_led.on()
         print(f'Retrying to connect to wifi... {connection_timeout}')
+        time.sleep(1)
+        onboard_led.off()
         
     # if the wifi gets connected, print the connection details
     if wifi.isconnected():
