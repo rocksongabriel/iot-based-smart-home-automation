@@ -13,9 +13,11 @@ def read_temperature_and_humidity():
         sensor.measure()
     except OSError as e:
         print(f"Couldn't read dht22 sensor data: {e}")
+    except NameError as name_error:
+        print(f"Coundn't read dht22 sensor data: {e}")
     else:
         global temperature
         global humidity
         temperature = sensor.temperature()
         humidity = sensor.humidity()
-    return temperature, humidity
+        return temperature, humidity
