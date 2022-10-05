@@ -9,6 +9,7 @@ from machine import Pin
 import utime
 from wifi_config import connect_to_wifi
 from ldr import read_ldr
+from fan import change_speed_of_fan
 
 onboard_led = machine.Pin(2, machine.Pin.OUT)
 pir = Pin(34, Pin.IN)
@@ -17,24 +18,20 @@ pir = Pin(34, Pin.IN)
 motion = False
 
 override_ldr = 0
+override_pir = 0
+override_fan = 0
 
+current_temperature = 0
+current_humidity = 0
 
-def handle_motion_interrupt(pin):
-    global motion
-    if pin.value():
-        motion = True
-    else:
-        motion = False
-    global interrupt_pin
-    interrupt_pin = pin
 
 
 # Set interrupt on pir sensor
-pir.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=handle_motion_interrupt)
+#pir.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=handle_motion_interrupt)
 
 # Establish wifi connection
-WIFI_SSID = "Galaxy A30"
-WIFI_PASSWORD = "12345678900PC05"
+WIFI_SSID = "Daasebre"
+WIFI_PASSWORD = "Daasebre"
 
 connection_status = connect_to_wifi(WIFI_SSID, WIFI_PASSWORD)[0]
 
@@ -51,6 +48,11 @@ def change_indicator_status_on_dashboard(pin=None, value=None):
 
 def write_temperature_and_humidity():
     temperature, humidity = read_temperature_and_humidity()
+    global current_temperature
+    global current_humidity
+    
+    current_temperature = temperature
+    current_humidity = humidity
 
     T_VPIN = 33
     H_VPIN = 34
@@ -62,29 +64,30 @@ def write_temperature_and_humidity():
 
 
 # Register connection handlers
-@blynk.ON("connected")
+@blynk.on("connected")
 def connected_handler(ping):
     # Sync the virtual pins when the the device connects
-    blynk.sync_virtual(0, 1, 2, 4)  # Sync virtual pins 0, 1, 2
+    blynk.sync_virtual(0, 1, 2, 4, 9, 11)  # Sync virtual pins 0, 1, 2
     onboard_led.on()  # Turn LED on
     print(f"Connected to blynk server ... Ping: {ping}ms")
 
 
-@blynk.ON("disconnected")
+@blynk.on("disconnected")
 def disconnected_handler(ping):
     print(f"Disconnected from blynk server ... Ping: {ping}ms")
 
 
 # Register handlers for the light and socket
-@blynk.ON("V0")  # Virtual Pin 0
+@blynk.on("V0")  # Virtual Pin 0
 def inside_light_handler(value):
     value = int(value[0])
-    print(f"MANUALLY Switching inside light {'on' if value == 1 else 'off' } ...")
-    switch_bulb("inside", value)
-    change_indicator_status_on_dashboard(5, value)
+    if (value == 1 or value == 0 and override_pir == 1) or (override_pir == 1 and value == 1 or value == 0):
+        print(f"MANUALLY Switching inside light {'on' if value == 1 else 'off' } ...")
+        switch_bulb("inside", value)
+        change_indicator_status_on_dashboard(5, value)
 
 
-@blynk.ON("V1")  # Virtual Pin 1
+@blynk.on("V1")  # Virtual Pin 1
 def outside_light_handler(value):
     value = int(value[0])
     
@@ -94,30 +97,55 @@ def outside_light_handler(value):
         change_indicator_status_on_dashboard(6, value)
 
 
-@blynk.ON("V2")  # Virtual Pin 2
+@blynk.on("V2")  # Virtual Pin 2
 def socket_handler(value):
     value = int(value[0])
     print(f"MANUALLY Switching socket {'on' if value == 1 else 'off' } ...")
     switch_socket(value)
     change_indicator_status_on_dashboard(7, value)
+    
+@blynk.on("V9")
+def fan_handler(value):
+    value = int(value[0])
+    if (override_fan == 1 and value in [0, 1, 2, 3]) or (value in [0, 1, 2, 3] and override_fan == 1):
+        change_speed_of_fan(speed = value)
+
 
 # Override the ldr value
-@blynk.ON("V4")
+@blynk.on("V4")
 def override_ldr_handler(value):
     value = int(value[0])
     global override_ldr
     override_ldr = value
     change_indicator_status_on_dashboard(8, value)
     
+@blynk.on("V10")
+def override_pir_handler(value):
+    value = int(value[0])
+    global override_pir
+    override_pir = value
+    change_indicator_status_on_dashboard(10, value)
+    
+@blynk.on("V11")
+def override_fan_handler(value):
+    value = int(value[0])
+    global override_fan
+    override_fan = value
+    
+    
+    
 def runLoop():
     START_TIME_FOR_TEMP_UPLOAD = utime.ticks_ms()
-    WAIT_TIME = 5000  # 2 seconds
+    WAIT_TIME = 5000  # 5 seconds
 
     START_TIME_FOR_PIR = utime.ticks_ms()
     
     START_TIME_FOR_LDR = utime.ticks_ms()
     LDR_WAIT_TIME = 2000 # 2 seconds
 
+    START_TIME_FOR_FAN_CONTROL = utime.ticks_ms()
+    FAN_CONTROL_WAIT_TIME = 2000 # 2 seconds
+    
     while True:
 
         now = utime.ticks_ms()
@@ -143,14 +171,30 @@ def runLoop():
             
             START_TIME_FOR_LDR = now
                 
+        # AUTOMATIC CONTROL OF FAN
+        if utime.ticks_diff(now, START_TIME_FOR_FAN_CONTROL) > FAN_CONTROL_WAIT_TIME:
+            if override_fan == 0:
+                if current_temperature <= 22.9:
+                    change_speed_of_fan(speed=0)
+                elif current_temperature >=23 or current_temperature <= 24.9:
+                    change_speed_of_fan(speed=1)
+                elif current_temperature >= 25 or current_temperature <= 27:
+                    change_speed_of_fan(speed=2)
+                elif current_temperature >= 27.1 and override_fan == 0:
+                    change_speed_of_fan(speed=3)
+                
             
+            START_TIME_FOR_FAN_CONTROL = now
 
         # TODO: if the PIR detects motion, turn on the lights
         # If it detects motion again, turn off the lights
         # Turn internal lights on if motion is detected
 
-        # if motion:
-        #    switch_bulb("inside", 1)
+        if motion and override_pir == 0:
+            switch_bulb("inside", 1)
+            change_indicator_status_on_dashboard(0, 1)
+            change_indicator_status_on_dashboard(5, 1)
+            
 
         # Run the blynk instance
         blynk.run()
